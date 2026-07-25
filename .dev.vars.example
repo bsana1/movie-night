@@ -1,0 +1,3 @@
+# Copy to .dev.vars for local Cloudflare Pages development. Never commit .dev.vars.
+TMDB_API_KEY=replace-with-your-tmdb-key
+OMDB_API_KEY=replace-with-your-omdb-key

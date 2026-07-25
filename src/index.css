@@ -1,0 +1,13 @@
+:root {
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  background: #0f1116;
+  color: #ede6d6;
+  font-family: 'Work Sans', sans-serif;
+}
