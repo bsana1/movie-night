@@ -90,6 +90,28 @@ not enforce it, so a change that blows the budget will pass local testing
 and only fail once deployed. If you touch the fetch count in this file,
 test against the deployed URL, not just `pages:dev`, before calling it done.
 
+## Working around the budget: pagination
+
+The 50-subrequest cap is *per Worker invocation*, and every HTTP request is
+its own fresh invocation with its own fresh budget — so a single search
+covering hundreds of candidates isn't one request scanning hundreds, it's
+several requests each scanning ~30-40, chained together.
+`src/lib/reelScoreSearch.ts` does this: it calls `/api/movies` with an
+increasing `offset` (see [movies-api.md](movies-api.md#pagination)) up to
+`MAX_PAGES` times, merging and deduping results, stopping early once
+`hasMore` is `false`. One "Find movies" click is a handful of sequential
+network round-trips, not one.
+
+Cost of this approach: `discover` (the TMDB catalog listing) is re-run on
+*every* page, even though it returns the same ranked candidate list each
+time — offset only changes which slice of that stable list gets rated. For
+`scanDepth=150` with both services, that's 16 of the 45-subrequest budget
+spent on redundant discovery on every single page. Acceptable for this
+project's scale, but the honest fix if it ever needs to be cheaper is
+persisting the discovered/ranked candidate list (e.g. in Cloudflare KV,
+keyed by region+services+genreId+scanDepth, TTL a few minutes) so only the
+first page of a search pays the discovery cost.
+
 ## Why Cloudflare Pages specifically
 
 The app needs a place to run server-side code (to keep API keys off the

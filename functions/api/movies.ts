@@ -152,11 +152,13 @@ export const onRequestGet = async (context: Context): Promise<Response> => {
   const requestedDepth = Number.parseInt(url.searchParams.get('scanDepth') ?? '', 10)
   const genreId = Number.parseInt(url.searchParams.get('genreId') ?? '', 10)
   const services = validServices(url.searchParams.get('services'))
+  const requestedOffset = Number.parseInt(url.searchParams.get('offset') ?? '0', 10)
 
   if (!region || !/^[A-Z]{2}$/.test(region) || !services || !Number.isFinite(minScore) || minScore < 0 || minScore > 10) {
     return json({ error: 'invalid-request' }, 400)
   }
   const scanDepth = [40, 80, 150].includes(requestedDepth) ? requestedDepth : 80
+  const offset = Number.isFinite(requestedOffset) && requestedOffset >= 0 ? requestedOffset : 0
 
   // Namespace the cache key by deploy so a code change (e.g. a change to how
   // results are computed) can never serve a stale response left over from a
@@ -185,10 +187,10 @@ export const onRequestGet = async (context: Context): Promise<Response> => {
     const maxRatingLookups = Math.max(0, SUBREQUEST_BUDGET - 1 - discoverCalls)
 
     const seenIds = new Set<number>()
-    const toCheck = candidates
+    const rankedCandidates = candidates
       .filter((movie) => (seenIds.has(movie.id) ? false : (seenIds.add(movie.id), true)))
       .sort((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0))
-      .slice(0, maxRatingLookups)
+    const toCheck = rankedCandidates.slice(offset, offset + maxRatingLookups)
 
     const movies = (await pool(toCheck, async (movie): Promise<ReelScoreMovie | null> => {
       const year = movie.release_date?.slice(0, 4) ?? ''
@@ -208,6 +210,8 @@ export const onRequestGet = async (context: Context): Promise<Response> => {
     const body = {
       movies: movies.filter((movie) => !seen.has(movie.imdbId) && Boolean(seen.add(movie.imdbId))).sort((a, b) => b.rating - a.rating),
       scannedCount: toCheck.length,
+      hasMore: offset + toCheck.length < rankedCandidates.length,
+      totalCandidates: rankedCandidates.length,
     }
     const response = json(body, 200, true)
     await edgeCache.default.put(cacheKey, response.clone())
