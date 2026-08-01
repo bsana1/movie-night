@@ -20,9 +20,9 @@ interface CandidateMovie {
 }
 
 // Cloudflare Workers on the free plan cap each invocation at 50 subrequests.
-// 1 (providers) + up to 8 (discover pages across 2 services) leaves room for
-// this many candidates, each needing 2 lookups (imdb id + rating).
-const MAX_RATING_LOOKUPS = 18
+// Reserve a safety margin below that, then split what's left between TMDB
+// discovery calls and OMDb rating lookups (1 subrequest each, per candidate).
+const SUBREQUEST_BUDGET = 45
 
 interface ReelScoreMovie {
   title: string
@@ -114,21 +114,33 @@ async function discover(env: Env, region: string, providerId: number, scanDepth:
   ).slice(0, scanDepth)
 }
 
-async function getImdbId(env: Env, movieId: number): Promise<string | null> {
-  const data = await tmdbJson(`https://api.themoviedb.org/3/movie/${movieId}/external_ids?api_key=${encodeURIComponent(env.TMDB_API_KEY)}`)
-  return typeof data.imdb_id === 'string' ? data.imdb_id : null
+interface OmdbMatch {
+  imdbId: string
+  rating: number
 }
 
-async function getImdbRating(env: Env, imdbId: string): Promise<number | null> {
-  const response = await fetch(`https://www.omdbapi.com/?apikey=${encodeURIComponent(env.OMDB_API_KEY)}&i=${encodeURIComponent(imdbId)}`)
+// Looking up by title+year (instead of TMDB's external_ids + OMDb's by-id
+// lookup) costs one subrequest instead of two, roughly doubling how many
+// candidates fit in the budget above. OMDb's `y` filter is exact, so a
+// title with a mismatched release year (rare, e.g. festival vs wide
+// release) will come back as no match rather than a wrong one.
+async function getOmdbMatch(env: Env, title: string, year: string): Promise<OmdbMatch | null> {
+  const params = new URLSearchParams({
+    apikey: env.OMDB_API_KEY,
+    t: title,
+    type: 'movie',
+  })
+  if (year) params.set('y', year)
+  const response = await fetch(`https://www.omdbapi.com/?${params.toString()}`)
   if (!response.ok) throw new Error('omdb-failed')
-  const data = await response.json() as { Response?: string; Error?: string; imdbRating?: string }
+  const data = await response.json() as { Response?: string; Error?: string; imdbID?: string; imdbRating?: string }
   if (data.Response === 'False') {
     if (/limit reached|invalid api key/i.test(data.Error ?? '')) throw new Error('omdb-limit')
     return null
   }
   const rating = Number.parseFloat(data.imdbRating ?? '')
-  return Number.isNaN(rating) ? null : rating
+  if (typeof data.imdbID !== 'string' || Number.isNaN(rating)) return null
+  return { imdbId: data.imdbID, rating }
 }
 
 export const onRequestGet = async (context: Context): Promise<Response> => {
@@ -142,7 +154,7 @@ export const onRequestGet = async (context: Context): Promise<Response> => {
   if (!region || !/^[A-Z]{2}$/.test(region) || !services || !Number.isFinite(minScore) || minScore < 0 || minScore > 10) {
     return json({ error: 'invalid-request' }, 400)
   }
-  const scanDepth = [40, 80].includes(requestedDepth) ? requestedDepth : 80
+  const scanDepth = [40, 80, 150].includes(requestedDepth) ? requestedDepth : 80
   const cacheKey = new Request(url.toString())
   const edgeCache = caches as CacheStorage & { default: Cache }
   const cached = await edgeCache.default.match(cacheKey)
@@ -159,23 +171,26 @@ export const onRequestGet = async (context: Context): Promise<Response> => {
 
     if (candidates.length === 0) return json({ error: 'no-candidates' }, 404)
 
+    // getProviderIds spent 1 subrequest; discover spent one per page above.
+    const discoverCalls = services.length * Math.ceil(scanDepth / 20)
+    const maxRatingLookups = Math.max(0, SUBREQUEST_BUDGET - 1 - discoverCalls)
+
     const seenIds = new Set<number>()
     const toCheck = candidates
       .filter((movie) => (seenIds.has(movie.id) ? false : (seenIds.add(movie.id), true)))
       .sort((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0))
-      .slice(0, MAX_RATING_LOOKUPS)
+      .slice(0, maxRatingLookups)
 
     const movies = (await pool(toCheck, async (movie): Promise<ReelScoreMovie | null> => {
-      const imdbId = await getImdbId(context.env, movie.id)
-      if (!imdbId) return null
-      const rating = await getImdbRating(context.env, imdbId)
-      if (rating === null || rating < minScore) return null
+      const year = movie.release_date?.slice(0, 4) ?? ''
+      const match = await getOmdbMatch(context.env, movie.title, year)
+      if (!match || match.rating < minScore) return null
       return {
         title: movie.title,
-        year: movie.release_date?.slice(0, 4) ?? '',
+        year,
         poster: movie.poster_path ? `https://image.tmdb.org/t/p/w342${movie.poster_path}` : null,
-        imdbId,
-        rating,
+        imdbId: match.imdbId,
+        rating: match.rating,
         service: movie.service,
       }
     }, 5)).filter((movie): movie is ReelScoreMovie => movie !== null)

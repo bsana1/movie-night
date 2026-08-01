@@ -13,7 +13,7 @@ Consumed only by [`src/lib/reelScoreSearch.ts`](../../src/lib/reelScoreSearch.ts
 | `region` | yes | 2-letter uppercase (`^[A-Z]{2}$`) | TMDB watch-region code, e.g. `US` |
 | `services` | yes | comma-separated, no duplicates | Only `netflix` and `prime` are valid |
 | `minScore` | yes | number, `0`–`10` | Minimum IMDb rating to keep |
-| `scanDepth` | no | `40` or `80` | Anything else silently falls back to `80` |
+| `scanDepth` | no | `40`, `80`, or `150` | Anything else silently falls back to `80` |
 | `genreId` | no | TMDB genre ID (integer) | Omit for "any genre" |
 
 Any missing/malformed required param → `400 { "error": "invalid-request" }`
@@ -40,8 +40,9 @@ before any external call is made.
 ```
 
 - `movies` is deduped by `imdbId` and sorted by `rating` descending.
-- `scannedCount` is how many candidates actually got a rating lookup — capped
-  by `MAX_RATING_LOOKUPS`, **not** the same as the requested `scanDepth`. See
+- `scannedCount` is how many candidates actually got a rating lookup —
+  **not** the same as the requested `scanDepth`, and not even monotonic
+  with it (a deeper scan can rate *fewer* candidates). See
   [architecture.md](architecture.md#subrequest-budget) for why.
 - Successful responses are cached at the edge for 4 hours, keyed on the full
   request URL (so identical filters reuse the cache; any different filter
