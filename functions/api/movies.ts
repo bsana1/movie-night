@@ -180,6 +180,6 @@ export const onRequestGet = async (context: Context): Promise<Response> => {
     if (error instanceof Error && error.message === 'omdb-limit') {
       return json({ error: 'omdb-limit' }, 429)
     }
-    return json({ error: 'search-failed' }, 502)
+    return json({ error: 'search-failed', debug: error instanceof Error ? error.message : String(error) }, 502)
   }
 }
