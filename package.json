@@ -1,5 +1,11 @@
 {
   "name": "movie-night",
+  "description": "Reel Score — find a movie worth watching on Netflix or Prime Video, filtered by IMDb rating, genre, and region.",
+  "homepage": "https://movie-night-btn.pages.dev",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bsana1/movie-night"
+  },
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -7,7 +13,8 @@
     "dev": "vite",
     "build": "tsc -b && tsc -p tsconfig.functions.json && vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "pages:dev": "npm run build && wrangler pages dev dist"
   },
   "dependencies": {
     "react": "^19.2.7",
@@ -20,6 +27,7 @@
     "@vitejs/plugin-react": "^6.0.3",
     "oxlint": "^1.71.0",
     "typescript": "~6.0.2",
-    "vite": "^8.1.1"
+    "vite": "^8.1.1",
+    "wrangler": "^4.118.0"
   }
 }
