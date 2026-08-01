@@ -3,6 +3,8 @@ type StreamingService = 'netflix' | 'prime'
 interface Env {
   TMDB_API_KEY: string
   OMDB_API_KEY: string
+  // Auto-populated by Cloudflare Pages with the deployed commit SHA.
+  CF_PAGES_COMMIT_SHA?: string
 }
 
 interface Context {
@@ -155,7 +157,14 @@ export const onRequestGet = async (context: Context): Promise<Response> => {
     return json({ error: 'invalid-request' }, 400)
   }
   const scanDepth = [40, 80, 150].includes(requestedDepth) ? requestedDepth : 80
-  const cacheKey = new Request(url.toString())
+
+  // Namespace the cache key by deploy so a code change (e.g. a change to how
+  // results are computed) can never serve a stale response left over from a
+  // previous deploy — s-maxage is 4h, far longer than we want a bug fix to
+  // take to reach real traffic.
+  const versionedUrl = new URL(url.toString())
+  versionedUrl.searchParams.set('_v', context.env.CF_PAGES_COMMIT_SHA ?? 'dev')
+  const cacheKey = new Request(versionedUrl.toString())
   const edgeCache = caches as CacheStorage & { default: Cache }
   const cached = await edgeCache.default.match(cacheKey)
   if (cached) return cached

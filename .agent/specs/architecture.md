@@ -35,6 +35,13 @@ Cloudflare Pages secrets, injected into `env` at request time, and never
 shipped to the browser. See [deployment.md](deployment.md) for where those
 secrets actually live.
 
+The edge cache key includes `CF_PAGES_COMMIT_SHA` (auto-populated by
+Cloudflare Pages), so every deploy gets its own cache namespace. Without
+that, a code change to how results are computed could sit invisible behind
+a still-warm 4-hour-old cache entry from the previous deploy — this
+actually happened once (the doubled-results fix below didn't show up on
+the live default search until this was added).
+
 ## Subrequest budget
 
 Cloudflare Workers on the free plan cap each invocation at **50 outbound
