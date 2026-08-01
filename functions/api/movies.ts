@@ -15,8 +15,14 @@ interface CandidateMovie {
   title: string
   release_date?: string
   poster_path?: string | null
+  popularity?: number
   service: StreamingService
 }
+
+// Cloudflare Workers on the free plan cap each invocation at 50 subrequests.
+// 1 (providers) + up to 8 (discover pages across 2 services) leaves room for
+// this many candidates, each needing 2 lookups (imdb id + rating).
+const MAX_RATING_LOOKUPS = 18
 
 interface ReelScoreMovie {
   title: string
@@ -153,7 +159,13 @@ export const onRequestGet = async (context: Context): Promise<Response> => {
 
     if (candidates.length === 0) return json({ error: 'no-candidates' }, 404)
 
-    const movies = (await pool(candidates, async (movie): Promise<ReelScoreMovie | null> => {
+    const seenIds = new Set<number>()
+    const toCheck = candidates
+      .filter((movie) => (seenIds.has(movie.id) ? false : (seenIds.add(movie.id), true)))
+      .sort((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0))
+      .slice(0, MAX_RATING_LOOKUPS)
+
+    const movies = (await pool(toCheck, async (movie): Promise<ReelScoreMovie | null> => {
       const imdbId = await getImdbId(context.env, movie.id)
       if (!imdbId) return null
       const rating = await getImdbRating(context.env, imdbId)
@@ -171,7 +183,7 @@ export const onRequestGet = async (context: Context): Promise<Response> => {
     const seen = new Set<string>()
     const body = {
       movies: movies.filter((movie) => !seen.has(movie.imdbId) && Boolean(seen.add(movie.imdbId))).sort((a, b) => b.rating - a.rating),
-      scannedCount: candidates.length,
+      scannedCount: toCheck.length,
     }
     const response = json(body, 200, true)
     await edgeCache.default.put(cacheKey, response.clone())
@@ -180,6 +192,6 @@ export const onRequestGet = async (context: Context): Promise<Response> => {
     if (error instanceof Error && error.message === 'omdb-limit') {
       return json({ error: 'omdb-limit' }, 429)
     }
-    return json({ error: 'search-failed', debug: error instanceof Error ? error.message : String(error) }, 502)
+    return json({ error: 'search-failed' }, 502)
   }
 }
